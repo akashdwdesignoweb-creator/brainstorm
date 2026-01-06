@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { geminiModel } from "@/app/lib/gemini";
+import { generateGeminiResponse } from "@/app/lib/gemini";
 import { openai, openaiModel } from "@/app/lib/openai";
 import { buildBraceMapPrompt } from "@/app/lib/braceMapPrompt";
 
@@ -32,8 +32,7 @@ export async function POST(req: Request) {
             text = response.choices[0].message.content || "";
         } else if (process.env.GEMINI_API_KEY) {
             provider = "Gemini";
-            const result = await geminiModel.generateContent(prompt);
-            text = result.response.text();
+            text = await generateGeminiResponse(prompt);
         } else {
             return NextResponse.json(
                 { error: "No AI provider API key found (OpenAI or Gemini)" },
@@ -47,6 +46,8 @@ export async function POST(req: Request) {
         const cleanJson = text
             .replace(/```json/g, "")
             .replace(/```/g, "")
+            // Removing strict trim for start/end to avoid cutting valid json if noise exists
+            // But usually the regex below handles it:
             .replace(/^[^{\[]+/, "") // Remove anything before the first { or [
             .replace(/[^}\]]+$/, "") // Remove anything after the last } or ]
             .trim();

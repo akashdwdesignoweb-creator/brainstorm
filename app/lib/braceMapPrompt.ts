@@ -11,7 +11,7 @@ RULES:
     *   GOOD LABEL: "View User Details:\\n1. Name\\n2. Email Address\\n3. Past Order History\\n4. Account Status"
 4.  **GROUPING**: Do not fragment related small details into separate tiny nodes. Group them into one "Card" node (using newlines).
 5.  **Professional Tone**: Use simple but precise business language.
-6.  **Coverage**: Cover every aspect: Authentication, Dashboard, User Mgmt, Settings, etc.
+6.  **Coverage**: Cover every aspect: Authentication, Dashboard, User Mgmt, Settings,admin panel, user panel , or any other panel that may be needed or can exist for the project etc.
 
 JSON STRUCTURE (Strict):
 {
