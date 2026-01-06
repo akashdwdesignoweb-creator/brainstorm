@@ -18,8 +18,11 @@ export async function POST(req: Request) {
         let text = "";
         let provider = "";
 
-        // Check if OpenAI key is available
-        if (process.env.OPENAI_API_KEY) {
+        // Check for Gemini FIRST (Prioritized)
+        if (process.env.GEMINI_API_KEY) {
+            provider = "Gemini";
+            text = await generateGeminiResponse(prompt);
+        } else if (process.env.OPENAI_API_KEY) {
             provider = "OpenAI";
             const response = await openai.chat.completions.create({
                 model: openaiModel,
@@ -30,9 +33,6 @@ export async function POST(req: Request) {
                 response_format: { type: "json_object" }
             });
             text = response.choices[0].message.content || "";
-        } else if (process.env.GEMINI_API_KEY) {
-            provider = "Gemini";
-            text = await generateGeminiResponse(prompt);
         } else {
             return NextResponse.json(
                 { error: "No AI provider API key found (OpenAI or Gemini)" },
@@ -46,8 +46,6 @@ export async function POST(req: Request) {
         const cleanJson = text
             .replace(/```json/g, "")
             .replace(/```/g, "")
-            // Removing strict trim for start/end to avoid cutting valid json if noise exists
-            // But usually the regex below handles it:
             .replace(/^[^{\[]+/, "") // Remove anything before the first { or [
             .replace(/[^}\]]+$/, "") // Remove anything after the last } or ]
             .trim();
