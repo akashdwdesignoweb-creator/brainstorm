@@ -18,12 +18,14 @@ import "reactflow/dist/style.css";
 import { BraceNode } from "@/app/lib/braceMapSchema";
 import { BRANCH_COLORS } from "@/app/lib/mapColors";
 import dagre from "dagre";
-import { toPng } from "html-to-image";
+import { exportMindMapToPdf } from "@/app/lib/pdfGenerator";
 
 /* ==================== CONFIGURATION ==================== */
 
-const NODE_WIDTH = 250;
-const NODE_HEIGHT = 80;
+// Base values for estimation (CSS controls actual render)
+const BASE_WIDTH = 200;
+const BASE_HEIGHT = 60;
+const MAX_WIDTH = 400;
 
 /* ==================== LAYOUT HELPER ==================== */
 
@@ -31,11 +33,43 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = "LR") => 
     const dagreGraph = new dagre.graphlib.Graph();
     dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-    const isHorizontal = direction === "LR";
-    dagreGraph.setGraph({ rankdir: direction, ranksep: 180, nodesep: 60 });
+    dagreGraph.setGraph({
+        rankdir: direction,
+        ranksep: 300, // Generous spacing to prevent overlap
+        nodesep: 100
+    });
 
     nodes.forEach((node) => {
-        dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+        // --- Robust Dynamic Size Estimation ---
+        let width = BASE_WIDTH;
+        let height = BASE_HEIGHT;
+
+        if (node.data.label) {
+            const text = node.data.label;
+            const charCount = text.length;
+            const hasNewlines = text.includes("\n");
+
+            // Width Estimation (Approx 9px per char)
+            let estimatedTextWidth = charCount * 9;
+            if (hasNewlines) {
+                const lines = text.split("\n");
+                const maxLineChars = Math.max(...lines.map((l: string) => l.length));
+                estimatedTextWidth = maxLineChars * 9;
+            }
+            // Clamp width
+            width = Math.max(BASE_WIDTH, Math.min(estimatedTextWidth + 60, MAX_WIDTH));
+
+            // Height Estimation
+            const textWidth = width - 40; // padding
+            const charsPerLine = textWidth / 9;
+            const wrappedLines = Math.ceil(charCount / charsPerLine);
+            const explicitLines = text.split("\n").length;
+            const totalLines = Math.max(wrappedLines, explicitLines);
+
+            height = Math.max(BASE_HEIGHT, 50 + (totalLines * 24));
+        }
+
+        dagreGraph.setNode(node.id, { width, height });
     });
 
     edges.forEach((edge) => {
@@ -46,14 +80,14 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = "LR") => 
 
     const layoutedNodes = nodes.map((node) => {
         const nodeWithPosition = dagreGraph.node(node.id);
-        node.targetPosition = isHorizontal ? ("left" as any) : "top";
-        node.sourcePosition = isHorizontal ? ("right" as any) : "bottom";
+        const { width, height } = dagreGraph.node(node.id);
 
-        // We are shifting the dagre node position (anchor=center center) to the top left
-        // so it matches the React Flow node anchor point (top left).
+        node.targetPosition = "left" as any;
+        node.sourcePosition = "right" as any;
+
         node.position = {
-            x: nodeWithPosition.x - NODE_WIDTH / 2,
-            y: nodeWithPosition.y - NODE_HEIGHT / 2,
+            x: nodeWithPosition.x - width / 2,
+            y: nodeWithPosition.y - height / 2,
         };
 
         return node;
@@ -74,44 +108,50 @@ function flattenTree(
     const edges: Edge[] = [];
 
     const isRoot = depth === 0;
-
-    // Minimal & Modern Node Styling
-    let style: React.CSSProperties = {
-        padding: "12px 24px",
-        borderRadius: "12px",
-        minWidth: NODE_WIDTH,
-        fontSize: isRoot ? "16px" : "14px",
-        fontWeight: isRoot ? 700 : 500,
-        textAlign: "center",
-        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)",
-        border: "1px solid",
-        transition: "all 0.2s ease",
-    };
-
     const color = BRANCH_COLORS[branchIndex % BRANCH_COLORS.length];
 
+    const label = node.label || "";
+    // Align left if long, center if short/title
+    const isLongContent = label.length > 50 || label.includes("\n") || label.includes("1.") || label.trim().startsWith("-");
+
+    // Unified CSS Styling (Same shape for everyone)
+    let style: React.CSSProperties = {
+        padding: "16px 24px",
+        fontSize: "15px",
+        fontWeight: isRoot ? 700 : 500,
+        backgroundColor: isRoot ? "#0f172a" : "#ffffff",
+        border: `3px solid ${isRoot ? "#0f172a" : color}`,
+        color: isRoot ? "#ffffff" : "#1e293b",
+        fontFamily: "var(--font-sans)",
+        lineHeight: "1.6",
+        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)",
+        transition: "all 0.2s ease",
+
+        // UNIFIED SHAPE
+        borderRadius: "16px",
+        width: "fit-content", // Allow dynamic growth
+        minWidth: isRoot ? 200 : 180,
+        maxWidth: MAX_WIDTH,
+        height: "auto",
+
+        // Alignment
+        textAlign: isLongContent ? "left" : "center",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        whiteSpace: isLongContent ? "pre-wrap" : "normal",
+        wordWrap: "break-word",
+    };
+
     if (isRoot) {
-        style = {
-            ...style,
-            background: "#0f172a",
-            color: "#ffffff",
-            borderColor: "#0f172a",
-            minWidth: 280,
-        };
-    } else {
-        // Light minimalist theme for children
-        style = {
-            ...style,
-            background: "#ffffff",
-            color: "#1e293b",
-            borderColor: color, // Use branch color for border
-        };
+        style.fontSize = "18px";
+        style.minWidth = 220;
     }
 
     nodes.push({
         id: node.id,
         data: { label: node.label },
-        position: { x: 0, y: 0 }, // Initial position, will be computed by dagre
+        position: { x: 0, y: 0 },
         style,
         type: "default",
     });
@@ -121,21 +161,18 @@ function flattenTree(
             id: `${parentId}-${node.id}`,
             source: parentId,
             target: node.id,
-            type: "straight", // Clean straight lines or 'smoothstep'
-            style: { stroke: "#cbd5e1", strokeWidth: 1.5 },
-            markerEnd: {
-                type: MarkerType.ArrowClosed,
-                color: "#cbd5e1",
-                width: 15,
-                height: 15,
+            type: "default",
+            style: {
+                stroke: color,
+                strokeWidth: 3,
+                opacity: 0.8
             },
+            animated: false,
         });
     }
 
     if (node.children) {
         node.children.forEach((child, index) => {
-            // Pass branchIndex down. For root's immediate children, assign a new index.
-            // For deeper levels, keep the index (inheriting color).
             const newBranchIndex = isRoot ? index : branchIndex;
             const result = flattenTree(child, node.id, depth + 1, newBranchIndex);
             nodes.push(...result.nodes);
@@ -151,58 +188,29 @@ function flattenTree(
 function MindMapContent({ root }: { root: BraceNode }) {
     const { fitView, getNodes } = useReactFlow();
 
-    // Initial data processing
-    const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
-        return flattenTree(root);
-    }, [root]);
-
-    // Layouting
-    const { nodes: layoutedNodes, edges: layoutedEdges } = useMemo(() => {
-        return getLayoutedElements(initialNodes, initialEdges);
-    }, [initialNodes, initialEdges]);
+    const { nodes: initialNodes, edges: initialEdges } = useMemo(() => flattenTree(root), [root]);
+    const { nodes: layoutedNodes, edges: layoutedEdges } = useMemo(() => getLayoutedElements(initialNodes, initialEdges), [initialNodes, initialEdges]);
 
     const [nodes, setNodes, onNodesChange] = useNodesState(layoutedNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(layoutedEdges);
 
-    // Download functionality
-    const downloadImage = () => {
+    const downloadPdf = () => {
         const nodes = getNodes();
+        const currentEdges = edges;
+
         if (nodes.length === 0) return;
 
-        const bounds = getRectOfNodes(nodes);
-        const padding = 50;
-        const width = bounds.width + padding * 2;
-        const height = bounds.height + padding * 2;
-
-        const selector = ".react-flow__viewport";
-        const element = document.querySelector(selector) as HTMLElement;
-
-        if (!element) return;
-
-        toPng(element, {
-            backgroundColor: "#f8fafc",
-            width: width,
-            height: height,
-            style: {
-                width: `${width}px`,
-                height: `${height}px`,
-                transform: `translate(${-(bounds.x - padding)}px, ${-(bounds.y - padding)}px) scale(1)`,
-            },
-        }).then((dataUrl) => {
-            const a = document.createElement("a");
-            a.setAttribute("download", "mindmap.png");
-            a.setAttribute("href", dataUrl);
-            a.click();
-        });
+        try {
+            exportMindMapToPdf(nodes, currentEdges);
+        } catch (error) {
+            console.error("Failed to download PDF", error);
+            alert("Could not generate PDF. Please try again.");
+        }
     };
 
     useEffect(() => {
-        // Re-fit view when nodes change (e.g. initial load)
-        window.requestAnimationFrame(() => {
-            fitView();
-        });
+        window.requestAnimationFrame(() => fitView());
     }, [nodes, fitView]);
-
 
     return (
         <ReactFlow
@@ -213,32 +221,21 @@ function MindMapContent({ root }: { root: BraceNode }) {
             fitView
             minZoom={0.1}
             maxZoom={4}
-            nodesDraggable={false} // dagre layout relies on fixed positions usually, or drag needs re-calc
+            nodesDraggable={false}
             nodesConnectable={false}
         >
-            <Background color="#e2e8f0" gap={16} size={1} />
+            <Background color="#e2e8f0" gap={24} size={1} />
             <Controls showInteractive={false} className="!bg-white !border-slate-200 !shadow-lg !rounded-xl overflow-hidden" />
 
             <Panel position="top-right">
                 <button
-                    onClick={downloadImage}
-                    className="bg-white hover:bg-slate-50 text-slate-700 font-semibold py-2 px-4 border border-slate-200 rounded-xl shadow-lg flex items-center gap-2 transition-all active:scale-95"
+                    onClick={downloadPdf}
+                    className="bg-white hover:bg-slate-50 text-slate-900 font-bold py-3 px-5 border border-slate-200 rounded-xl shadow-xl flex items-center gap-3 transition-all active:scale-95 group"
                 >
-                    <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        strokeWidth={2}
-                        stroke="currentColor"
-                        className="w-4 h-4"
-                    >
-                        <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"
-                        />
+                    <svg className="w-5 h-5 text-brand-500 group-hover:scale-110 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                     </svg>
-                    Download Map
+                    Download PDF
                 </button>
             </Panel>
         </ReactFlow>
@@ -247,7 +244,7 @@ function MindMapContent({ root }: { root: BraceNode }) {
 
 /* ==================== WRAPPER ==================== */
 
-export default function MindMap({ root }: { root?: BraceNode }) {
+export default function MindMap({ root }: { root: BraceNode }) {
     if (!root) {
         return (
             <div className="h-full flex items-center justify-center">
